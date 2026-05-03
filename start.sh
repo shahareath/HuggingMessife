@@ -278,7 +278,7 @@ trap graceful_shutdown SIGTERM SIGINT
 node "$APP_DIR/health-server.js" &
 HEALTH_PID=$!
 
-if [ -n "${UPTIMEROBOT_API_KEY:-}" ] && [ -n "${SPACE_HOST:-}" ]; then
+if [ "${UPTIMEROBOT_ENABLED:-false}" = "true" ] && [ -n "${UPTIMEROBOT_API_KEY:-}" ] && [ -n "${SPACE_HOST:-}" ]; then
   echo "Setting up UptimeRobot monitor..."
   bash "$APP_DIR/setup-uptimerobot.sh" "${SPACE_HOST}" || true
 fi

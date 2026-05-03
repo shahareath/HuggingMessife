@@ -21,14 +21,12 @@ secrets:
   - name: HF_TOKEN
     description: "Hugging Face token with write access for private Dataset backup."
   - name: CLOUDFLARE_WORKERS_TOKEN
-    description: "Cloudflare API token for automatic Worker proxy setup."
-  - name: UPTIMEROBOT_API_KEY
-    description: "UptimeRobot Main API key for automatic keep-awake monitor setup."
+    description: "Cloudflare API token for automatic Telegram proxy and keep-awake Worker setup."
 ---
 
 # HuggingMess
 
-HuggingMess runs [Nous Research Hermes Agent](https://github.com/NousResearch/hermes-agent) as a Hugging Face Docker Space. It follows the same practical shape as HuggingClaw: one public Space port, Telegram gateway support, Cloudflare Worker proxy setup, UptimeRobot keep-awake, and private HF Dataset backup for Hermes state.
+HuggingMess runs [Nous Research Hermes Agent](https://github.com/NousResearch/hermes-agent) as a Hugging Face Docker Space. It follows the same practical shape as HuggingClaw: one public Space port, Telegram gateway support, Cloudflare Worker proxy setup, Cloudflare cron keep-awake, and private HF Dataset backup for Hermes state.
 
 ## Quick Start
 
@@ -43,8 +41,7 @@ HuggingMess runs [Nous Research Hermes Agent](https://github.com/NousResearch/he
 | `TELEGRAM_ALLOWED_USERS` | Recommended | Comma-separated numeric Telegram user IDs |
 | `GATEWAY_TOKEN` | Recommended | Bearer token for `/v1/*` API routes |
 | `HF_TOKEN` | Optional | Enables private Dataset backup named `huggingmess-backup` |
-| `CLOUDFLARE_WORKERS_TOKEN` | Optional | Auto-creates a Worker proxy for Telegram Bot API traffic |
-| `UPTIMEROBOT_API_KEY` | Optional | Auto-creates a monitor for `/health` |
+| `CLOUDFLARE_WORKERS_TOKEN` | Optional | Auto-creates Workers for Telegram proxy and `/health` keep-awake |
 
 ## Access Control
 
@@ -124,14 +121,15 @@ TELEGRAM_MODE=polling
 
 Hermes requires numeric Telegram IDs for allowlists. You can use either Hermes-native `TELEGRAM_ALLOWED_USERS` or the HuggingClaw-style aliases `TELEGRAM_USER_ID` / `TELEGRAM_USER_IDS`.
 
-## Cloudflare Proxy
+## Cloudflare Workers
 
 Hugging Face Spaces can be restrictive for outbound bot API traffic. Add `CLOUDFLARE_WORKERS_TOKEN`, and HuggingMess will:
 
-1. create a Cloudflare Worker,
+1. create a Telegram proxy Worker,
 2. generate a shared proxy secret,
 3. set Hermes Telegram `base_url` to `https://worker.example.workers.dev/bot`,
-4. set `base_file_url` to `https://worker.example.workers.dev/file/bot`.
+4. set `base_file_url` to `https://worker.example.workers.dev/file/bot`,
+5. create a second scheduled keep-awake Worker that pings your Space `/health` route.
 
 Manual mode is also supported:
 
@@ -141,6 +139,29 @@ CLOUDFLARE_PROXY_SECRET=optional-shared-secret
 ```
 
 The manual Worker source is included in `cloudflare-worker.js`.
+
+### Keep Awake
+
+When `CLOUDFLARE_WORKERS_TOKEN` and `SPACE_HOST` are present, HuggingMess creates a scheduled Worker that pings:
+
+```text
+https://your-space.hf.space/health
+```
+
+Default schedule:
+
+```text
+*/10 * * * *
+```
+
+Optional variables:
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `CLOUDFLARE_KEEPALIVE_ENABLED` | `true` | Set `false` to skip keep-awake Worker setup |
+| `CLOUDFLARE_KEEPALIVE_CRON` | `*/10 * * * *` | Cloudflare cron expression |
+| `CLOUDFLARE_KEEPALIVE_URL` | `https://<SPACE_HOST>/health` | URL to ping |
+| `CLOUDFLARE_KEEPALIVE_WORKER_NAME` | derived from `SPACE_HOST` | Custom Worker name |
 
 ## Backup
 
@@ -153,22 +174,6 @@ Set `HF_TOKEN` with write access to enable backup. HuggingMess syncs `/opt/data`
 | `SYNC_INCLUDE_ENV` | `false` | Include `/opt/data/.env` in backup |
 
 By default `.env` is excluded from backups because HF Space secrets are already injected at runtime.
-
-## Keep Awake
-
-Add `UPTIMEROBOT_API_KEY`, and HuggingMess creates or reuses a monitor for:
-
-```text
-https://your-space.hf.space/health
-```
-
-Optional UptimeRobot variables:
-
-| Variable | Default | Description |
-| :--- | :--- | :--- |
-| `UPTIMEROBOT_MONITOR_NAME` | `HuggingMess <space>` | Friendly monitor name |
-| `UPTIMEROBOT_INTERVAL` | `300` | Monitor interval in seconds |
-| `UPTIMEROBOT_ALERT_CONTACTS` | unset | Dash-separated alert contact IDs |
 
 ## Local Development
 
@@ -187,7 +192,7 @@ http://localhost:7861
 | Route | Purpose |
 | :--- | :--- |
 | `/` | HuggingMess dashboard |
-| `/health` | Health check for HF and UptimeRobot |
+| `/health` | Health check for HF and Cloudflare keep-awake |
 | `/status` | JSON status |
 | `/app/` | Proxied Hermes dashboard/app |
 | `/v1/*` | Proxied Hermes OpenAI-compatible API routes |

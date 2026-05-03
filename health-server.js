@@ -17,7 +17,7 @@ const LOGIN_PATH = "/login";
 const SESSION_COOKIE = "huggingmess_session";
 
 const SYNC_STATUS_FILE = "/tmp/huggingmess-sync-status.json";
-const UPTIMEROBOT_STATUS_FILE = "/tmp/huggingmess-uptimerobot-status.json";
+const CLOUDFLARE_KEEPALIVE_STATUS_FILE = "/tmp/huggingmess-cloudflare-keepalive-status.json";
 
 function canConnect(port, host = GATEWAY_HOST, timeoutMs = 600) {
   return new Promise((resolve) => {
@@ -314,7 +314,7 @@ async function statusPayload() {
     model: process.env.MODEL_FOR_CONFIG || process.env.HERMES_MODEL || process.env.LLM_MODEL || "",
     provider: process.env.PROVIDER_FOR_CONFIG || process.env.HERMES_INFERENCE_PROVIDER || "auto",
     backup: sync,
-    uptimerobot: readJson(UPTIMEROBOT_STATUS_FILE, null),
+    keepalive: readJson(CLOUDFLARE_KEEPALIVE_STATUS_FILE, null),
   };
 }
 
@@ -346,61 +346,46 @@ function renderDashboard(data) {
   const syncStatus = String(data.backup?.status || "unknown");
   const syncTone = ["success", "restored", "synced", "configured"].includes(syncStatus) ? "ok" : syncStatus === "disabled" ? "warn" : "neutral";
   const telegramTone = data.telegram.configured ? (data.telegram.webhookListening || !data.telegram.webhook ? "ok" : "warn") : "warn";
-  const keepAliveTone = data.uptimerobot?.configured ? "ok" : process.env.UPTIMEROBOT_API_KEY ? "warn" : "neutral";
-  const gatewayDetail = data.gateway
-    ? `OpenAI-compatible API is listening on internal port <code>${data.ports.gateway}</code>.`
-    : `Gateway API is not reachable on internal port <code>${data.ports.gateway}</code>.`;
-  const appDetail = data.dashboard
-    ? `Hermes dashboard is listening on internal port <code>${data.ports.dashboard}</code>.`
-    : `Hermes dashboard is not reachable on internal port <code>${data.ports.dashboard}</code>.`;
-  const authDetail = data.authConfigured
-    ? `Protected by <code>GATEWAY_TOKEN</code> with a token-only login page.`
-    : `No <code>GATEWAY_TOKEN</code> is set; public app routes are unlocked.`;
+  const keepaliveConfigured = data.keepalive?.configured === true;
+  const keepaliveStatus = String(data.keepalive?.status || (process.env.CLOUDFLARE_WORKERS_TOKEN ? "pending" : "not configured"));
+  const keepAliveTone = keepaliveConfigured ? "ok" : process.env.CLOUDFLARE_WORKERS_TOKEN ? "warn" : "neutral";
   const telegramDetail = data.telegram.configured
     ? `${data.telegram.webhook ? "Webhook mode" : "Polling mode"}${data.telegram.proxy ? ` through Cloudflare proxy` : ""}.`
     : "Add TELEGRAM_BOT_TOKEN to enable Telegram.";
   const backupDetail = data.backup?.message ? escapeHtml(data.backup.message) : "No backup status has been written yet.";
   const backupMeta = data.backup?.timestamp ? `Last update ${escapeHtml(data.backup.timestamp)}` : "";
-  const keepAliveDetail = data.uptimerobot?.configured
-    ? `Monitoring <code>${escapeHtml(data.uptimerobot.url || "/health")}</code>.`
-    : process.env.UPTIMEROBOT_API_KEY
-      ? "UptimeRobot setup is pending or failed; check Space logs."
-      : "Add UPTIMEROBOT_API_KEY to create a keep-awake monitor.";
+  const keepAliveDetail = keepaliveConfigured
+    ? `Worker <code>${escapeHtml(data.keepalive.workerName || "keepalive")}</code> pings <code>${escapeHtml(data.keepalive.targetUrl || "/health")}</code>.`
+    : process.env.CLOUDFLARE_WORKERS_TOKEN
+      ? "Cloudflare keep-awake Worker is pending or failed; check Space logs."
+      : "Add CLOUDFLARE_WORKERS_TOKEN to create a scheduled keep-awake Worker.";
+  const serviceOk = data.gateway && data.dashboard;
+  const topCards = [
+    `<div class="mini-card"><span class="mini-label">Service</span>${toneBadge(serviceOk ? "Running" : "Starting", serviceOk ? "ok" : "warn")}</div>`,
+    `<div class="mini-card"><span class="mini-label">Uptime</span><strong>${escapeHtml(data.uptime)}</strong></div>`,
+    `<div class="mini-card"><span class="mini-label">Backup</span>${toneBadge(syncStatus.toUpperCase(), syncTone)}</div>`,
+  ].join("");
   const tiles = [
     renderTile({
       title: "Gateway",
       value: toneBadge(data.gateway ? "Online" : "Offline", data.gateway ? "ok" : "off"),
-      detail: gatewayDetail,
+      detail: data.gateway ? `OpenAI-compatible API on port <code>${data.ports.gateway}</code>.` : `Gateway API is not reachable on port <code>${data.ports.gateway}</code>.`,
       tone: data.gateway ? "ok" : "off",
-      meta: `API routes are protected by <code>GATEWAY_TOKEN</code>.`,
-    }),
-    renderTile({
-      title: "Hermes App",
-      value: toneBadge(data.dashboard ? "Ready" : "Starting", data.dashboard ? "ok" : "warn"),
-      detail: appDetail,
-      tone: data.dashboard ? "ok" : "warn",
-      meta: `<code>/app/</code> opens in a new window.`,
-    }),
-    renderTile({
-      title: "Auth",
-      value: toneBadge(data.authConfigured ? "Token set" : "Unlocked", data.authConfigured ? "ok" : "warn"),
-      detail: authDetail,
-      tone: data.authConfigured ? "ok" : "warn",
-      meta: data.authConfigured ? "Browser visits use the login page; API clients use Bearer auth." : "Set GATEWAY_TOKEN before sharing this Space.",
-    }),
-    renderTile({
-      title: "Runtime",
-      value: escapeHtml(data.uptime),
-      detail: `Public port <code>${data.ports.public}</code>. Started <code>${escapeHtml(data.startedAt)}</code>.`,
-      tone: "neutral",
-      meta: `Health endpoint: <code>/health</code>`,
+      meta: data.authConfigured ? `Protected by <code>GATEWAY_TOKEN</code>.` : `Set <code>GATEWAY_TOKEN</code> before sharing.`,
     }),
     renderTile({
       title: "Model",
       value: `<code>${valueOrUnset(data.model)}</code>`,
       detail: `Provider <code>${valueOrUnset(data.provider || "auto")}</code>.`,
       tone: data.model ? "ok" : "warn",
-      meta: "For Gemini: LLM_MODEL=google/gemini-2.5-flash",
+      meta: "Gemini example: google/gemini-2.5-flash",
+    }),
+    renderTile({
+      title: "Runtime",
+      value: escapeHtml(data.uptime),
+      detail: `Public port <code>${data.ports.public}</code>; health at <code>/health</code>.`,
+      tone: "neutral",
+      meta: `Started <code>${escapeHtml(data.startedAt)}</code>.`,
     }),
     renderTile({
       title: "Telegram",
@@ -418,10 +403,10 @@ function renderDashboard(data) {
     }),
     renderTile({
       title: "Keep Awake",
-      value: toneBadge(data.uptimerobot?.configured ? "Monitor active" : "Not configured", keepAliveTone),
+      value: toneBadge(keepaliveConfigured ? "Cloudflare cron" : keepaliveStatus.toUpperCase(), keepAliveTone),
       detail: keepAliveDetail,
       tone: keepAliveTone,
-      meta: process.env.UPTIMEROBOT_API_KEY ? "UPTIMEROBOT_API_KEY detected." : "",
+      meta: keepaliveConfigured ? `Schedule <code>${escapeHtml(data.keepalive.cron || "*/10 * * * *")}</code>.` : "",
     }),
   ].join("");
 
@@ -432,61 +417,61 @@ function renderDashboard(data) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>HuggingMess</title>
   <style>
-    :root { color-scheme: dark; --bg:#101010; --panel:#171717; --panel2:#1e1e1e; --line:#303030; --text:#f3f4f6; --muted:#a1a1aa; --soft:#d4d4d8; --good:#4ade80; --warn:#fbbf24; --bad:#fb7185; --accent:#67e8f9; }
+    :root { color-scheme: dark; --bg:#08080f; --panel:#12111b; --panel2:#151421; --line:#26243a; --text:#f6f4ff; --muted:#7f7a9e; --soft:#b8b3d7; --good:#22c55e; --warn:#f5c542; --bad:#fb7185; --accent:#6557df; --accent2:#7c6cf2; }
     * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); font-size:14px; }
-    main { width:min(1180px, calc(100% - 32px)); margin:0 auto; padding:24px 0 32px; }
-    header { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; margin-bottom:18px; border-bottom:1px solid var(--line); padding-bottom:18px; }
-    h1 { margin:0; font-size:clamp(2rem, 4vw, 3.2rem); line-height:1; letter-spacing:0; }
-    .subtitle { margin-top:10px; color:var(--muted); max-width:700px; line-height:1.45; font-size:.95rem; }
-    .top-actions { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; min-width:300px; }
-    .overview { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:10px; margin-bottom:10px; }
-    .tile { border:1px solid var(--line); background:var(--panel); border-radius:8px; padding:14px; min-height:142px; display:flex; flex-direction:column; gap:10px; }
-    .tile.ok { border-color:rgba(74,222,128,.28); }
-    .tile.warn { border-color:rgba(251,191,36,.28); }
-    .tile.off { border-color:rgba(251,113,133,.32); }
+    body { margin:0; min-height:100vh; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); font-size:13px; }
+    main { width:min(720px, calc(100% - 32px)); margin:0 auto; padding:36px 0 44px; }
+    header { text-align:center; margin-bottom:22px; }
+    h1 { margin:0; font-size:1.65rem; line-height:1; letter-spacing:0; }
+    .subtitle { margin-top:12px; color:var(--muted); font-size:.72rem; text-transform:uppercase; letter-spacing:.14em; font-weight:800; }
+    .hero-action { display:flex; width:100%; min-height:46px; align-items:center; justify-content:center; border-radius:8px; background:var(--accent); color:#fff; text-decoration:none; font-weight:850; font-size:.98rem; margin:24px 0 20px; }
+    .hero-action:hover { background:var(--accent2); }
+    .mini-grid { display:grid; grid-template-columns:repeat(3, minmax(0, 1fr)); gap:10px; margin-bottom:18px; }
+    .mini-card { min-height:68px; border:1px solid var(--line); background:var(--panel); border-radius:8px; padding:13px; display:flex; flex-direction:column; justify-content:center; gap:9px; }
+    .mini-label { color:var(--muted); font-size:.66rem; letter-spacing:.16em; text-transform:uppercase; font-weight:850; }
+    .mini-card strong { font-size:1.02rem; }
+    .overview { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:10px; margin-bottom:10px; }
+    .tile { border:1px solid var(--line); background:var(--panel); border-radius:11px; padding:18px; min-height:124px; display:flex; flex-direction:column; gap:10px; position:relative; }
+    .tile.ok { border-color:rgba(34,197,94,.22); }
+    .tile.warn { border-color:rgba(245,197,66,.24); }
+    .tile.off { border-color:rgba(251,113,133,.28); }
     .tile-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
-    .tile-title { color:var(--muted); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; font-weight:800; }
+    .tile-title { color:var(--muted); font-size:.67rem; letter-spacing:.18em; text-transform:uppercase; font-weight:850; }
     .tile-dot { width:7px; height:7px; border-radius:50%; background:var(--line); }
     .tile.ok .tile-dot { background:var(--good); }
     .tile.warn .tile-dot { background:var(--warn); }
     .tile.off .tile-dot { background:var(--bad); }
-    .tile-value { font-size:1.05rem; font-weight:760; overflow-wrap:anywhere; }
-    .tile-detail { color:var(--soft); line-height:1.45; font-size:.86rem; }
-    .tile-meta { color:var(--muted); line-height:1.4; font-size:.78rem; margin-top:auto; overflow-wrap:anywhere; }
-    .panel { border:1px solid var(--line); background:var(--panel2); border-radius:8px; padding:14px; margin-top:10px; }
-    .launch-panel { display:flex; align-items:center; justify-content:space-between; gap:18px; }
-    .panel-title { color:var(--muted); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; font-weight:800; margin-bottom:7px; }
-    .panel-copy { color:var(--soft); line-height:1.45; font-size:.9rem; margin:0; }
-    code { background:#0d0d0d; border:1px solid var(--line); border-radius:6px; padding:2px 5px; color:var(--text); font-size:.9em; }
+    .tile-value { font-size:1.12rem; font-weight:850; overflow-wrap:anywhere; }
+    .tile-detail { color:var(--soft); line-height:1.45; font-size:.83rem; }
+    .tile-meta { color:var(--muted); line-height:1.4; font-size:.75rem; margin-top:auto; overflow-wrap:anywhere; }
+    .panel { border:1px solid var(--line); background:var(--panel2); border-radius:11px; padding:16px; margin-top:18px; }
+    .launch-panel { text-align:center; }
+    .panel-title { color:var(--muted); font-size:.7rem; letter-spacing:.16em; text-transform:uppercase; font-weight:850; margin-bottom:8px; }
+    .panel-copy { color:var(--soft); line-height:1.5; font-size:.86rem; margin:0 auto 14px; max-width:560px; }
+    code { background:#232234; border:1px solid #34324c; border-radius:6px; padding:2px 6px; color:var(--text); font-size:.9em; }
     pre { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; background:#0d0d0d; border:1px solid var(--line); border-radius:7px; padding:10px; color:var(--soft); font-size:.82rem; line-height:1.45; }
     .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
-    .badge { display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:999px; padding:4px 9px; font-size:.75rem; font-weight:800; line-height:1; }
-    .badge.ok { color:var(--good); border-color:rgba(74,222,128,.36); background:rgba(74,222,128,.08); }
-    .badge.warn { color:var(--warn); border-color:rgba(251,191,36,.34); background:rgba(251,191,36,.08); }
-    .badge.off { color:var(--bad); border-color:rgba(251,113,133,.36); background:rgba(251,113,133,.08); }
+    .badge { display:inline-flex; align-items:center; width:max-content; border:1px solid var(--line); border-radius:999px; padding:5px 10px; font-size:.72rem; font-weight:850; line-height:1; text-transform:uppercase; }
+    .badge.ok { color:var(--good); border-color:rgba(34,197,94,.34); background:rgba(34,197,94,.11); }
+    .badge.warn { color:var(--warn); border-color:rgba(245,197,66,.34); background:rgba(245,197,66,.11); }
+    .badge.off { color:var(--bad); border-color:rgba(251,113,133,.34); background:rgba(251,113,133,.11); }
     .badge.neutral { color:var(--soft); }
     .muted { color:var(--muted); }
-    .button { display:inline-flex; align-items:center; justify-content:center; min-height:34px; padding:0 11px; border-radius:7px; color:#081012; background:var(--accent); text-decoration:none; font-weight:800; font-size:.86rem; }
+    .button { display:inline-flex; align-items:center; justify-content:center; min-height:40px; padding:0 16px; border-radius:8px; color:#fff; background:var(--accent); text-decoration:none; font-weight:850; font-size:.9rem; }
     .button.secondary { color:var(--text); background:#242424; border:1px solid var(--line); }
-    .button.subtle { color:var(--soft); background:transparent; border:1px solid var(--line); }
-    @media (max-width: 980px) { .overview { grid-template-columns:repeat(2, minmax(0, 1fr)); } header { display:block; } .top-actions { justify-content:flex-start; margin-top:14px; min-width:0; } }
-    @media (max-width: 760px) { .launch-panel { display:block; } .launch-panel .button { margin-top:12px; width:100%; } }
-    @media (max-width: 620px) { main { width:min(100% - 20px, 1180px); padding-top:16px; } .overview { grid-template-columns:1fr; } h1 { font-size:2rem; } }
+    footer { color:var(--muted); text-align:center; font-size:.74rem; margin-top:18px; }
+    footer .live { color:var(--good); }
+    @media (max-width: 700px) { .mini-grid, .overview { grid-template-columns:1fr; } main { width:min(100% - 22px, 720px); padding-top:28px; } }
   </style>
 </head>
 <body>
   <main>
     <header>
-      <div>
-        <h1>HuggingMess</h1>
-        <div class="subtitle">Hermes Agent on Hugging Face Spaces: app gateway, OpenAI-compatible API, Telegram webhook, Cloudflare proxy, backup, and keep-awake state in one place.</div>
-      </div>
-      <div class="top-actions">
-        <a class="button" href="${APP_BASE}/" target="_blank" rel="noopener noreferrer">Open App</a>
-        <a class="button secondary" href="/status">Status JSON</a>
-      </div>
+      <h1>HuggingMess</h1>
+      <div class="subtitle">Self-hosted - Hugging Face Spaces - Hermes Agent</div>
     </header>
+    <a class="hero-action" href="${APP_BASE}/" target="_blank" rel="noopener noreferrer">Open Hermes Agent -></a>
+    <section class="mini-grid">${topCards}</section>
     <section class="overview">
       ${tiles}
     </section>
@@ -497,6 +482,7 @@ function renderDashboard(data) {
       </div>
       <a class="button" href="${APP_BASE}/" target="_blank" rel="noopener noreferrer">Open Hermes Agent</a>
     </section>
+    <footer><span class="live">Live</span> status - Health endpoint: <code>/health</code></footer>
   </main>
 </body>
 </html>`;
