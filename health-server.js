@@ -182,6 +182,11 @@ function requireAuth(req, res) {
   return false;
 }
 
+function wantsHtml(req) {
+  const accept = String(req.headers.accept || "");
+  return accept.includes("text/html");
+}
+
 async function handleLogin(req, res, parsed) {
   const nextPath = sanitizeNext(parsed.searchParams.get("next") || `${APP_BASE}/`);
 
@@ -303,8 +308,16 @@ async function statusPayload() {
   return {
     ok: gateway,
     uptime: formatUptime(Date.now() - startTime),
+    startedAt: new Date(startTime).toISOString(),
     gateway,
     dashboard,
+    authConfigured: !!API_SERVER_KEY,
+    ports: {
+      public: PORT,
+      gateway: GATEWAY_PORT,
+      dashboard: DASHBOARD_PORT,
+      telegramWebhook: TELEGRAM_WEBHOOK_PORT,
+    },
     telegram: {
       configured: !!process.env.TELEGRAM_BOT_TOKEN,
       webhook: !!process.env.TELEGRAM_WEBHOOK_URL,
@@ -320,19 +333,113 @@ async function statusPayload() {
 }
 
 function badge(label, state) {
-  const cls = state ? "ok" : "off";
-  return `<span class="badge ${cls}">${label}</span>`;
+  return `<span class="badge ${state ? "ok" : "off"}">${escapeHtml(label)}</span>`;
+}
+
+function toneBadge(label, tone = "neutral") {
+  return `<span class="badge ${tone}">${escapeHtml(label)}</span>`;
+}
+
+function valueOrUnset(value, fallback = "Not set") {
+  return value ? escapeHtml(value) : `<span class="muted">${escapeHtml(fallback)}</span>`;
+}
+
+function renderTile({ title, value, detail = "", tone = "neutral", meta = "" }) {
+  return `<article class="tile ${tone}">
+    <div class="tile-head">
+      <span class="tile-title">${escapeHtml(title)}</span>
+      <span class="tile-dot"></span>
+    </div>
+    <div class="tile-value">${value}</div>
+    ${detail ? `<div class="tile-detail">${detail}</div>` : ""}
+    ${meta ? `<div class="tile-meta">${meta}</div>` : ""}
+  </article>`;
 }
 
 function renderDashboard(data) {
-  const syncStatus = String(data.backup?.status || "unknown").toUpperCase();
-  const dashboardLink = data.dashboard ? `<a class="button" href="${APP_BASE}/" target="_blank" rel="noopener noreferrer">Open Hermes App</a>` : "";
-  const apiLink = data.gateway ? `<a class="button secondary" href="/v1/models">API Models</a>` : "";
-  const keepAlive = data.uptimerobot?.configured
-    ? `UptimeRobot is monitoring <code>${data.uptimerobot.url}</code>.`
+  const syncStatus = String(data.backup?.status || "unknown");
+  const syncTone = ["success", "restored", "synced", "configured"].includes(syncStatus) ? "ok" : syncStatus === "disabled" ? "warn" : "neutral";
+  const telegramTone = data.telegram.configured ? (data.telegram.webhookListening || !data.telegram.webhook ? "ok" : "warn") : "warn";
+  const keepAliveTone = data.uptimerobot?.configured ? "ok" : process.env.UPTIMEROBOT_API_KEY ? "warn" : "neutral";
+  const publicBase = process.env.SPACE_HOST ? `https://${process.env.SPACE_HOST}` : `http://localhost:${PORT}`;
+  const apiCurl = `curl -H "Authorization: Bearer $GATEWAY_TOKEN" ${publicBase}/v1/models`;
+  const gatewayDetail = data.gateway
+    ? `OpenAI-compatible API is listening on internal port <code>${data.ports.gateway}</code>.`
+    : `Gateway API is not reachable on internal port <code>${data.ports.gateway}</code>.`;
+  const appDetail = data.dashboard
+    ? `Hermes dashboard is listening on internal port <code>${data.ports.dashboard}</code>.`
+    : `Hermes dashboard is not reachable on internal port <code>${data.ports.dashboard}</code>.`;
+  const authDetail = data.authConfigured
+    ? `Protected by <code>GATEWAY_TOKEN</code> with a token-only login page.`
+    : `No <code>GATEWAY_TOKEN</code> is set; public app routes are unlocked.`;
+  const telegramDetail = data.telegram.configured
+    ? `${data.telegram.webhook ? "Webhook mode" : "Polling mode"}${data.telegram.proxy ? ` through Cloudflare proxy` : ""}.`
+    : "Add TELEGRAM_BOT_TOKEN to enable Telegram.";
+  const backupDetail = data.backup?.message ? escapeHtml(data.backup.message) : "No backup status has been written yet.";
+  const backupMeta = data.backup?.timestamp ? `Last update ${escapeHtml(data.backup.timestamp)}` : "";
+  const keepAliveDetail = data.uptimerobot?.configured
+    ? `Monitoring <code>${escapeHtml(data.uptimerobot.url || "/health")}</code>.`
     : process.env.UPTIMEROBOT_API_KEY
-      ? "UptimeRobot setup is pending or failed; check logs."
+      ? "UptimeRobot setup is pending or failed; check Space logs."
       : "Add UPTIMEROBOT_API_KEY to create a keep-awake monitor.";
+  const tiles = [
+    renderTile({
+      title: "Gateway",
+      value: toneBadge(data.gateway ? "Online" : "Offline", data.gateway ? "ok" : "off"),
+      detail: gatewayDetail,
+      tone: data.gateway ? "ok" : "off",
+      meta: `<code>/v1/models</code> requires token auth.`,
+    }),
+    renderTile({
+      title: "Hermes App",
+      value: toneBadge(data.dashboard ? "Ready" : "Starting", data.dashboard ? "ok" : "warn"),
+      detail: appDetail,
+      tone: data.dashboard ? "ok" : "warn",
+      meta: `<code>/app/</code> opens in a new window.`,
+    }),
+    renderTile({
+      title: "Auth",
+      value: toneBadge(data.authConfigured ? "Token set" : "Unlocked", data.authConfigured ? "ok" : "warn"),
+      detail: authDetail,
+      tone: data.authConfigured ? "ok" : "warn",
+      meta: data.authConfigured ? "Browser visits use the login page; API clients use Bearer auth." : "Set GATEWAY_TOKEN before sharing this Space.",
+    }),
+    renderTile({
+      title: "Runtime",
+      value: escapeHtml(data.uptime),
+      detail: `Public port <code>${data.ports.public}</code>. Started <code>${escapeHtml(data.startedAt)}</code>.`,
+      tone: "neutral",
+      meta: `Health endpoint: <code>/health</code>`,
+    }),
+    renderTile({
+      title: "Model",
+      value: `<code>${valueOrUnset(data.model)}</code>`,
+      detail: `Provider <code>${valueOrUnset(data.provider || "auto")}</code>.`,
+      tone: data.model ? "ok" : "warn",
+      meta: "For Gemini: LLM_MODEL=google/gemini-2.5-flash",
+    }),
+    renderTile({
+      title: "Telegram",
+      value: toneBadge(data.telegram.configured ? "Configured" : "Disabled", telegramTone),
+      detail: telegramDetail,
+      tone: telegramTone,
+      meta: data.telegram.webhookUrl ? `<code>${escapeHtml(data.telegram.webhookUrl)}</code>` : "",
+    }),
+    renderTile({
+      title: "Backup",
+      value: toneBadge(syncStatus.toUpperCase(), syncTone),
+      detail: backupDetail,
+      tone: syncTone,
+      meta: backupMeta,
+    }),
+    renderTile({
+      title: "Keep Awake",
+      value: toneBadge(data.uptimerobot?.configured ? "Monitor active" : "Not configured", keepAliveTone),
+      detail: keepAliveDetail,
+      tone: keepAliveTone,
+      meta: process.env.UPTIMEROBOT_API_KEY ? "UPTIMEROBOT_API_KEY detected." : "",
+    }),
+  ].join("");
 
   return `<!doctype html>
 <html lang="en">
@@ -341,26 +448,44 @@ function renderDashboard(data) {
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>HuggingMess</title>
   <style>
-    :root { color-scheme: dark; --bg:#10141f; --panel:#171d2b; --line:#293246; --text:#f4f7fb; --muted:#9aa7bd; --good:#22c55e; --warn:#f59e0b; --bad:#ef4444; --accent:#38bdf8; }
+    :root { color-scheme: dark; --bg:#101010; --panel:#171717; --panel2:#1e1e1e; --line:#303030; --text:#f3f4f6; --muted:#a1a1aa; --soft:#d4d4d8; --good:#4ade80; --warn:#fbbf24; --bad:#fb7185; --accent:#67e8f9; }
     * { box-sizing:border-box; }
-    body { margin:0; min-height:100vh; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); }
-    main { width:min(960px, calc(100% - 32px)); margin:0 auto; padding:36px 0; }
-    header { display:flex; justify-content:space-between; gap:16px; align-items:flex-start; margin-bottom:28px; }
-    h1 { margin:0; font-size:clamp(2rem, 6vw, 4.4rem); line-height:.95; letter-spacing:0; }
-    .subtitle { margin-top:12px; color:var(--muted); max-width:620px; line-height:1.5; }
-    .grid { display:grid; grid-template-columns:repeat(2, minmax(0, 1fr)); gap:14px; }
-    .card { border:1px solid var(--line); background:var(--panel); border-radius:8px; padding:18px; min-height:120px; }
-    .wide { grid-column:1 / -1; }
-    .label { color:var(--muted); font-size:.78rem; letter-spacing:.08em; text-transform:uppercase; margin-bottom:10px; }
-    .value { font-size:1.05rem; overflow-wrap:anywhere; }
-    code { background:#0b0f18; border:1px solid var(--line); border-radius:6px; padding:2px 6px; }
-    .row { display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
-    .badge { display:inline-flex; border:1px solid var(--line); border-radius:999px; padding:5px 10px; font-size:.8rem; font-weight:700; }
-    .badge.ok { color:var(--good); border-color:rgba(34,197,94,.35); background:rgba(34,197,94,.08); }
-    .badge.off { color:var(--bad); border-color:rgba(239,68,68,.35); background:rgba(239,68,68,.08); }
-    .button { display:inline-flex; align-items:center; justify-content:center; min-height:42px; padding:0 14px; border-radius:7px; color:#07111f; background:var(--accent); text-decoration:none; font-weight:750; }
-    .button.secondary { color:var(--text); background:#222b3c; border:1px solid var(--line); }
-    @media (max-width: 720px) { header { display:block; } .grid { grid-template-columns:1fr; } }
+    body { margin:0; min-height:100vh; font-family:Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background:var(--bg); color:var(--text); font-size:14px; }
+    main { width:min(1180px, calc(100% - 32px)); margin:0 auto; padding:24px 0 32px; }
+    header { display:flex; justify-content:space-between; gap:24px; align-items:flex-start; margin-bottom:18px; border-bottom:1px solid var(--line); padding-bottom:18px; }
+    h1 { margin:0; font-size:clamp(2rem, 4vw, 3.2rem); line-height:1; letter-spacing:0; }
+    .subtitle { margin-top:10px; color:var(--muted); max-width:700px; line-height:1.45; font-size:.95rem; }
+    .top-actions { display:flex; flex-wrap:wrap; gap:8px; justify-content:flex-end; min-width:300px; }
+    .overview { display:grid; grid-template-columns:repeat(4, minmax(0, 1fr)); gap:10px; margin-bottom:10px; }
+    .tile { border:1px solid var(--line); background:var(--panel); border-radius:8px; padding:14px; min-height:142px; display:flex; flex-direction:column; gap:10px; }
+    .tile.ok { border-color:rgba(74,222,128,.28); }
+    .tile.warn { border-color:rgba(251,191,36,.28); }
+    .tile.off { border-color:rgba(251,113,133,.32); }
+    .tile-head { display:flex; align-items:center; justify-content:space-between; gap:12px; }
+    .tile-title { color:var(--muted); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; font-weight:800; }
+    .tile-dot { width:7px; height:7px; border-radius:50%; background:var(--line); }
+    .tile.ok .tile-dot { background:var(--good); }
+    .tile.warn .tile-dot { background:var(--warn); }
+    .tile.off .tile-dot { background:var(--bad); }
+    .tile-value { font-size:1.05rem; font-weight:760; overflow-wrap:anywhere; }
+    .tile-detail { color:var(--soft); line-height:1.45; font-size:.86rem; }
+    .tile-meta { color:var(--muted); line-height:1.4; font-size:.78rem; margin-top:auto; overflow-wrap:anywhere; }
+    .panel { border:1px solid var(--line); background:var(--panel2); border-radius:8px; padding:14px; margin-top:10px; }
+    .panel-title { color:var(--muted); font-size:.72rem; letter-spacing:.12em; text-transform:uppercase; font-weight:800; margin-bottom:10px; }
+    code { background:#0d0d0d; border:1px solid var(--line); border-radius:6px; padding:2px 5px; color:var(--text); font-size:.9em; }
+    pre { margin:0; white-space:pre-wrap; overflow-wrap:anywhere; background:#0d0d0d; border:1px solid var(--line); border-radius:7px; padding:10px; color:var(--soft); font-size:.82rem; line-height:1.45; }
+    .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+    .badge { display:inline-flex; align-items:center; border:1px solid var(--line); border-radius:999px; padding:4px 9px; font-size:.75rem; font-weight:800; line-height:1; }
+    .badge.ok { color:var(--good); border-color:rgba(74,222,128,.36); background:rgba(74,222,128,.08); }
+    .badge.warn { color:var(--warn); border-color:rgba(251,191,36,.34); background:rgba(251,191,36,.08); }
+    .badge.off { color:var(--bad); border-color:rgba(251,113,133,.36); background:rgba(251,113,133,.08); }
+    .badge.neutral { color:var(--soft); }
+    .muted { color:var(--muted); }
+    .button { display:inline-flex; align-items:center; justify-content:center; min-height:34px; padding:0 11px; border-radius:7px; color:#081012; background:var(--accent); text-decoration:none; font-weight:800; font-size:.86rem; }
+    .button.secondary { color:var(--text); background:#242424; border:1px solid var(--line); }
+    .button.subtle { color:var(--soft); background:transparent; border:1px solid var(--line); }
+    @media (max-width: 980px) { .overview { grid-template-columns:repeat(2, minmax(0, 1fr)); } header { display:block; } .top-actions { justify-content:flex-start; margin-top:14px; min-width:0; } }
+    @media (max-width: 620px) { main { width:min(100% - 20px, 1180px); padding-top:16px; } .overview { grid-template-columns:1fr; } h1 { font-size:2rem; } }
   </style>
 </head>
 <body>
@@ -368,18 +493,21 @@ function renderDashboard(data) {
     <header>
       <div>
         <h1>HuggingMess</h1>
-        <div class="subtitle">Hermes Agent running as an always-on Hugging Face Docker Space, with Telegram gateway, state backup, Cloudflare proxy support, and keep-awake monitoring.</div>
+        <div class="subtitle">Hermes Agent on Hugging Face Spaces: app gateway, OpenAI-compatible API, Telegram webhook, Cloudflare proxy, backup, and keep-awake state in one place.</div>
       </div>
-      <div class="row">${badge("Gateway", data.gateway)}${badge("Dashboard", data.dashboard)}${badge("Backup", data.backup?.status !== "disabled")}</div>
+      <div class="top-actions">
+        <a class="button" href="${APP_BASE}/" target="_blank" rel="noopener noreferrer">Open App</a>
+        <a class="button secondary" href="/v1/models" target="_blank" rel="noopener noreferrer">Models</a>
+        <a class="button secondary" href="/status">Status JSON</a>
+        <a class="button subtle" href="${LOGOUT_PATH}">Logout</a>
+      </div>
     </header>
-    <section class="grid">
-      <div class="card"><div class="label">Uptime</div><div class="value">${data.uptime}</div></div>
-      <div class="card"><div class="label">Model</div><div class="value"><code>${data.model || "not set"}</code></div></div>
-      <div class="card"><div class="label">Provider</div><div class="value"><code>${data.provider}</code></div></div>
-      <div class="card"><div class="label">Telegram</div><div class="value">${data.telegram.configured ? "Configured" : "Not configured"}${data.telegram.webhook ? " via webhook" : ""}</div></div>
-      <div class="card wide"><div class="label">Backup</div><div class="value"><strong>${syncStatus}</strong><br>${data.backup?.message || ""}</div></div>
-      <div class="card wide"><div class="label">Keep Awake</div><div class="value">${keepAlive}</div></div>
-      <div class="card wide"><div class="label">Entrypoints</div><div class="row">${dashboardLink}${apiLink}<a class="button secondary" href="/status">Status JSON</a></div></div>
+    <section class="overview">
+      ${tiles}
+    </section>
+    <section class="panel">
+      <div class="panel-title">API Access</div>
+      <pre>${escapeHtml(apiCurl)}</pre>
     </section>
   </main>
 </body>
@@ -471,6 +599,10 @@ const server = http.createServer(async (req, res) => {
 
   if (path === "/v1" || path.startsWith("/v1/")) {
     if (!isAuthorized(req)) {
+      if (wantsHtml(req)) {
+        redirect(res, loginUrl(`${path}${parsed.search}`));
+        return;
+      }
       res.writeHead(401, {
         "content-type": "application/json",
         "cache-control": "no-store",
