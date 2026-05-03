@@ -60,6 +60,11 @@ if [ -n "${CLOUDFLARE_WORKERS_TOKEN:-}" ] || [ -n "${CLOUDFLARE_PROXY_URL:-}" ];
   fi
 fi
 
+if [ -n "${CLOUDFLARE_WORKERS_TOKEN:-}" ]; then
+  echo "Preparing Cloudflare Keepalive worker..."
+  python "$APP_DIR/cloudflare-keepalive-setup.py" || true
+fi
+
 if [ -n "${TELEGRAM_USER_IDS:-}" ] && [ -z "${TELEGRAM_ALLOWED_USERS:-}" ]; then
   export TELEGRAM_ALLOWED_USERS="$TELEGRAM_USER_IDS"
 elif [ -n "${TELEGRAM_USER_ID:-}" ] && [ -z "${TELEGRAM_ALLOWED_USERS:-}" ]; then
@@ -277,11 +282,6 @@ trap graceful_shutdown SIGTERM SIGINT
 
 node "$APP_DIR/health-server.js" &
 HEALTH_PID=$!
-
-if [ "${UPTIMEROBOT_ENABLED:-false}" = "true" ] && [ -n "${UPTIMEROBOT_API_KEY:-}" ] && [ -n "${SPACE_HOST:-}" ]; then
-  echo "Setting up UptimeRobot monitor..."
-  bash "$APP_DIR/setup-uptimerobot.sh" "${SPACE_HOST}" || true
-fi
 
 if [ -n "${WEBHOOK_URL:-}" ]; then
   python - <<'PY' >/dev/null 2>&1 &

@@ -142,7 +142,7 @@ The manual Worker source is included in `cloudflare-worker.js`.
 
 ### Keep Awake
 
-When `CLOUDFLARE_WORKERS_TOKEN` and `SPACE_HOST` are present, HuggingMess creates a scheduled Worker that pings:
+When `CLOUDFLARE_WORKERS_TOKEN` is present, HuggingMess creates a scheduled Worker that pings your Space's `/health` route. It automatically detects your Space hostname:
 
 ```text
 https://your-space.hf.space/health
@@ -160,8 +160,8 @@ Optional variables:
 | :--- | :--- | :--- |
 | `CLOUDFLARE_KEEPALIVE_ENABLED` | `true` | Set `false` to skip keep-awake Worker setup |
 | `CLOUDFLARE_KEEPALIVE_CRON` | `*/10 * * * *` | Cloudflare cron expression |
-| `CLOUDFLARE_KEEPALIVE_URL` | `https://<SPACE_HOST>/health` | URL to ping |
-| `CLOUDFLARE_KEEPALIVE_WORKER_NAME` | derived from `SPACE_HOST` | Custom Worker name |
+| `CLOUDFLARE_KEEPALIVE_URL` | `https://<auto-detected-space-host>/health` | URL to ping |
+| `CLOUDFLARE_KEEPALIVE_WORKER_NAME` | derived from space host | Custom Worker name |
 
 ## Backup
 

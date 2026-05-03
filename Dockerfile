@@ -16,13 +16,13 @@ COPY --chown=hermes:hermes start.sh /opt/huggingmess/start.sh
 COPY --chown=hermes:hermes health-server.js /opt/huggingmess/health-server.js
 COPY --chown=hermes:hermes hermes-sync.py /opt/huggingmess/hermes-sync.py
 COPY --chown=hermes:hermes cloudflare-proxy-setup.py /opt/huggingmess/cloudflare-proxy-setup.py
-COPY --chown=hermes:hermes setup-uptimerobot.sh /opt/huggingmess/setup-uptimerobot.sh
+COPY --chown=hermes:hermes cloudflare-keepalive-setup.py /opt/huggingmess/cloudflare-keepalive-setup.py
 
 RUN chmod +x \
     /opt/huggingmess/start.sh \
     /opt/huggingmess/hermes-sync.py \
     /opt/huggingmess/cloudflare-proxy-setup.py \
-    /opt/huggingmess/setup-uptimerobot.sh
+    /opt/huggingmess/cloudflare-keepalive-setup.py
 
 ENV HERMES_HOME=/opt/data \
     HUGGINGMESS_APP_DIR=/opt/huggingmess \
