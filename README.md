@@ -128,7 +128,7 @@ http://localhost:7861
 | `/` | HuggingMess dashboard |
 | `/health` | Health check for HF and UptimeRobot |
 | `/status` | JSON status |
-| `/dashboard/` | Proxied Hermes dashboard |
+| `/app/` | Proxied Hermes dashboard/app |
 | `/v1/models` | Proxied Hermes OpenAI-compatible API server |
 | `/telegram` | Telegram webhook endpoint |
 

@@ -11,6 +11,7 @@ const TELEGRAM_WEBHOOK_PORT = Number(process.env.TELEGRAM_WEBHOOK_PORT || 8765);
 const GATEWAY_HOST = "127.0.0.1";
 const startTime = Date.now();
 const API_SERVER_KEY = process.env.API_SERVER_KEY || "";
+const APP_BASE = "/app";
 
 const SYNC_STATUS_FILE = "/tmp/huggingmess-sync-status.json";
 const UPTIMEROBOT_STATUS_FILE = "/tmp/huggingmess-uptimerobot-status.json";
@@ -69,6 +70,11 @@ function proxyRequest(req, res, targetPort, rewritePath = (path) => path) {
   req.pipe(proxy);
 }
 
+function redirect(res, location, statusCode = 302) {
+  res.writeHead(statusCode, { location });
+  res.end();
+}
+
 function formatUptime(ms) {
   const total = Math.floor(ms / 1000);
   const days = Math.floor(total / 86400);
@@ -114,7 +120,7 @@ function badge(label, state) {
 
 function renderDashboard(data) {
   const syncStatus = String(data.backup?.status || "unknown").toUpperCase();
-  const dashboardLink = data.dashboard ? `<a class="button" href="/dashboard/">Open Hermes Dashboard</a>` : "";
+  const dashboardLink = data.dashboard ? `<a class="button" href="${APP_BASE}/">Open Hermes App</a>` : "";
   const apiLink = data.gateway ? `<a class="button secondary" href="/v1/models">API Models</a>` : "";
   const keepAlive = data.uptimerobot?.configured
     ? `UptimeRobot is monitoring <code>${data.uptimerobot.url}</code>.`
@@ -178,24 +184,29 @@ const server = http.createServer(async (req, res) => {
   const parsed = new URL(req.url, "http://localhost");
   const path = parsed.pathname;
 
-  if (path === "/health" || path === "/dashboard/health") {
+  if (path === "/health" || path === `${APP_BASE}/health`) {
     const data = await statusPayload();
     res.writeHead(data.ok ? 200 : 503, { "content-type": "application/json" });
     res.end(JSON.stringify({ ok: data.ok, gateway: data.gateway, uptime: data.uptime }));
     return;
   }
 
-  if (path === "/status" || path === "/dashboard/status") {
+  if (path === "/status" || path === `${APP_BASE}/status`) {
     const data = await statusPayload();
     res.writeHead(200, { "content-type": "application/json" });
     res.end(JSON.stringify(data, null, 2));
     return;
   }
 
-  if (path === "/" || path === "/dashboard") {
+  if (path === "/") {
     const data = await statusPayload();
     res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
     res.end(renderDashboard(data));
+    return;
+  }
+
+  if (path === "/dashboard" || path === "/dashboard/") {
+    redirect(res, `${APP_BASE}/${parsed.search}`);
     return;
   }
 
@@ -204,8 +215,39 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (path === "/dashboard/" || path.startsWith("/dashboard/")) {
-    proxyRequest(req, res, DASHBOARD_PORT, (p) => p.replace(/^\/dashboard/, "") || "/");
+  if (path === APP_BASE || path.startsWith(`${APP_BASE}/`)) {
+    proxyRequest(req, res, DASHBOARD_PORT, (p) => p.replace(/^\/app/, "") || "/");
+    return;
+  }
+
+  if (
+    path === "/favicon.ico" ||
+    path.startsWith("/assets/") ||
+    path.startsWith("/api/") ||
+    path.startsWith("/dashboard-plugins/") ||
+    path.startsWith("/ds-assets/")
+  ) {
+    proxyRequest(req, res, DASHBOARD_PORT);
+    return;
+  }
+
+  if (
+    [
+      "/analytics",
+      "/chat",
+      "/config",
+      "/cron",
+      "/docs",
+      "/env",
+      "/logs",
+      "/models",
+      "/plugins",
+      "/profiles",
+      "/sessions",
+      "/skills",
+    ].some((route) => path === route || path.startsWith(`${route}/`))
+  ) {
+    redirect(res, `${APP_BASE}${path}${parsed.search}`);
     return;
   }
 
