@@ -35,6 +35,7 @@ secrets:
 ## Table of Contents
 
 - [✨ Features](#-features)
+- [🎥 Video Tutorial](#-video-tutorial)
 - [🚀 Quick Start](#-quick-start)
 - [🔐 Access Control](#-access-control)
 - [🤖 LLM Providers](#-llm-providers)
@@ -57,6 +58,10 @@ secrets:
 - 💾 **Persistent Backup:** Syncs chats, config, and session data to a private HF Dataset.
 - ⏰ **Keep-Alive:** Can provision a cron-triggered Cloudflare Worker to keep the Space awake.
 - 🤖 **Broad Provider Support:** Supports Hermes' native providers, direct API-key providers, OAuth providers, and custom OpenAI-compatible endpoints.
+
+## 🎥 Video Tutorial
+
+Watch a quick walkthrough on YouTube: [Deploying HuggingMes on HF Spaces](https://www.youtube.com/watch?v=kagB1ID-NtE).
 
 ## 🚀 Quick Start
 
