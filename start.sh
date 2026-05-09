@@ -27,7 +27,7 @@ export TELEGRAM_WEBHOOK_PORT
 
 echo ""
 echo "  ╔══════════════════════════════════════════╗"
-echo "  ║        💬 HuggingMes Hermes Gateway      ║"
+echo "  ║        🪽 HuggingMes Hermes Gateway      ║"
 echo "  ╚══════════════════════════════════════════╝"
 echo ""
 
