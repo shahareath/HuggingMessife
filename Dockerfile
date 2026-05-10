@@ -10,6 +10,23 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     jq \
     python3 \
+    chromium \
+    libnss3 \
+    libatk1.0-0 \
+    libatk-bridge2.0-0 \
+    libdrm2 \
+    libgbm1 \
+    libxcomposite1 \
+    libxdamage1 \
+    libxrandr2 \
+    libxkbcommon0 \
+    libx11-6 \
+    libxext6 \
+    libxfixes3 \
+    libasound2 \
+    fonts-dejavu-core \
+    fonts-liberation \
+    fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/* \
     && uv pip install --python /opt/hermes/.venv/bin/python --no-cache-dir huggingface_hub
 
@@ -73,7 +90,8 @@ RUN echo 'export PATH="/opt/hermes/.venv/bin:/opt/data/.local/bin:$PATH"' \
 ENV HERMES_HOME=/opt/data \
     HUGGINGMES_APP_DIR=/opt/huggingmes \
     HERMES_AGENT_VERSION=${HERMES_AGENT_VERSION} \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium
 
 EXPOSE 7861
 
